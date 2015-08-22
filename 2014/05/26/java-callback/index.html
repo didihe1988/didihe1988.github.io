@@ -1,0 +1,449 @@
+
+ <!DOCTYPE HTML>
+<html >
+<head>
+  <meta charset="UTF-8">
+  
+    <title>Handler&amp;Message实现安卓回调机制 | didihe1988&#39;s blog</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="didihe1988">
+    
+    <meta name="description" content="Husky Android Network Wrapper
+Husky是安卓网络通信库，封装了java.net.HttpURLConnection类，实现了get、post、put、delete、head方法以及多线程上传和下载。项目地址: https://github.com/didihe1988">
+    
+    
+    
+    
+    <link rel="alternative" href="/atom.xml" title="didihe1988&#39;s blog" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+
+</head>
+
+  <body>
+    <header>
+      <div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="didihe1988&#39;s blog">didihe1988&#39;s blog</a></h1>
+				<h2 class="blog-motto"></h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="Menu">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">首页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="Search" />
+						<input type="hidden" name="q" value="site:didihe1988.github.io">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2014/05/26/java-callback/" title="Handler&amp;Message实现安卓回调机制" itemprop="url">Handler&amp;Message实现安卓回调机制</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="http://didihe1988.github.io/about" title="didihe1988" target="_blank" itemprop="author">didihe1988</a>
+		
+  <p class="article-time">
+    <time datetime="2014-05-26T07:13:05.000Z" itemprop="datePublished"> Published May 26 2014</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">Contents</strong>
+		
+			<ol class="toc"><li class="toc-item toc-level-4"><a class="toc-link" href="#Husky_Android_Network_Wrapper"><span class="toc-number">1.</span> <span class="toc-text">Husky Android Network Wrapper</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Hanlder和Message类简介"><span class="toc-number">2.</span> <span class="toc-text">Hanlder和Message类简介</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Husky的需求"><span class="toc-number">3.</span> <span class="toc-text">Husky的需求</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Husky的实现"><span class="toc-number">4.</span> <span class="toc-text">Husky的实现</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#总结"><span class="toc-number">5.</span> <span class="toc-text">总结</span></a></li></ol>
+		
+		</div>
+		
+		<h4 id="Husky_Android_Network_Wrapper">Husky Android Network Wrapper</h4>
+<p>Husky是安卓网络通信库，封装了java.net.HttpURLConnection类，实现了get、post、put、delete、head方法以及多线程上传和下载。<br>项目地址: <a href="https://github.com/didihe1988/Husky-Android-Network-Wrapper" target="_blank" rel="external">https://github.com/didihe1988/Husky-Android-Network-Wrapper</a></p>
+<h4 id="Hanlder和Message类简介">Hanlder和Message类简介</h4>
+<p><strong>Handler</strong><br>通过关联线程的MessageQueue来发送接收Message和Runnable对象。当创建新线程时，可以通过Handler与主线程通信。主要有这三个方法:<br><strong>post</strong>(Runnable) 使Runnable入列到MessageQueue。<br><strong>sendMessage</strong>(Message) 使Message入列到MessageQueue<br><strong>handleMessage</strong>(Message) 处理得到的消息(需要实现Handler的一个子类)。</p>
+<p><strong>Message</strong><br>Message.arg1 Message.arg2  只有几个Integer值时的便捷选项<br>Message.what 用户定义的类型码。<br>可以携带Bundle传递数据。setData(Bundle) getData。</p>
+<h4 id="Husky的需求">Husky的需求</h4>
+<p>1.安卓端网络通讯需要单独线程，与负责UI的主线程分离。网络通信线程向服务器发送请求。如果得到服务器响应，就返回响应；如果发生错误，传回Exception、错误码等。这就需要<strong>线程间通信</strong>。<br>2.主线程在收到Message之后，根据Message.what判断成功与否:onSuccess和onFailure。这俩函数具体操作由用户实现(如更新UI)，所以提供一个<strong>抽象</strong>类HttpCallBack，用户继承之后可以实现具体操作。<br>3.网络通信线程需要url、method、params等参数，而且在返回时需要<strong>主线程的handler</strong>向其发送消息。主线程handler接受到消息之后，需要将消息传给HttpCallback。综合起来需要一个类充当<strong>connector</strong>的角色，通过成员变量将它们联系起来。</p>
+<h4 id="Husky的实现">Husky的实现</h4>
+<p>实现顺序对应需求的顺序</p>
+<p>1.HttpRunnable负责网络通信任务</p>
+<pre><code><span class="class"><span class="keyword">class</span> <span class="title">HttpRunnable</span> <span class="keyword">implements</span> <span class="title">Runnable</span> </span>{
+    @Override
+    <span class="keyword">public</span> void run() {
+
+        <span class="comment">// .............. </span>
+        <span class="comment">//从RequestQueue queue中取出queue</span>
+        HttpRequest request=queue.pop();
+        <span class="comment">//依据类型不同执行网络通讯</span>
+        Object obj=execute(request);
+        <span class="comment">//调用该类sendMessage(Handler,Object)</span>
+        sendMessage(request.getHandler(), obj);
+    }
+
+    <span class="comment">//该函数通过Handler.sendMessage(Message)向主线程发送消息</span>
+    <span class="comment">//handler从该线程的request得到</span>
+    <span class="keyword">private</span> void sendMessage(Handler handler,Object obj)
+    {
+        Message msg=Message.obtain();
+        Bundle bundle=<span class="keyword">new</span> Bundle();
+        <span class="comment">//依据Object类型的不同，设定Message.what，并决定Message携带的数据</span>
+        <span class="keyword">if</span>(obj <span class="keyword">instanceof</span>  String)
+        {
+            msg.what=MessageType.REQUEST_SUCCESS;
+            bundle.putString(<span class="string">"response"</span>,(String)obj);
+        }
+        <span class="keyword">else</span> <span class="keyword">if</span>(obj  <span class="keyword">instanceof</span> ProtocolException)
+        {
+            msg.what=MessageType.REQUEST_FAILURE;
+            bundle.putString(<span class="string">"exception"</span>,obj.toString());
+        }
+        <span class="keyword">else</span> <span class="keyword">if</span>(obj <span class="keyword">instanceof</span>  IOException)
+        {
+            msg.what=MessageType.REQUEST_FAILURE;
+            bundle.putString(<span class="string">"exception"</span>,obj.toString());
+        }
+        msg.setData(bundle);
+        handler.sendMessage(msg);
+    }
+}
+</code></pre><p>2.HttpCallBack负责向用户提供接口</p>
+<pre><code><span class="keyword">public</span> <span class="keyword">abstract</span> <span class="keyword">class</span> HttpCallback{
+            <span class="comment">//依据Message.what决定回调哪个函数，并且将Message携带的数据作为参数传入。</span>
+            <span class="keyword">public</span> <span class="keyword">void</span> <span class="title">setCallback</span>(Message msg)    {
+                 Bundle bundle=msg.getData();
+                 <span class="keyword">switch</span> (msg.what)
+                 {
+                     <span class="keyword">case</span> MessageType.REQUEST_SUCCESS:
+                         onSuceess(bundle.<span class="keyword">get</span>(<span class="string">"response"</span>));
+                         <span class="keyword">break</span>;
+                     <span class="keyword">case</span> MessageType.REQUEST_FAILURE:
+                     <span class="keyword">default</span>:
+                         onFailure(bundle.<span class="keyword">get</span>(<span class="string">"exception"</span>));
+                 }   
+             }
+             <span class="comment">//如前所述，两个需要用户实现的抽象方法</span>
+             <span class="keyword">public</span> <span class="keyword">abstract</span> <span class="keyword">void</span> <span class="title">onSuceess</span>(Object <span class="keyword">object</span>);
+
+             <span class="keyword">public</span> <span class="keyword">abstract</span>  <span class="keyword">void</span> <span class="title">onFailure</span>(Object <span class="keyword">object</span>);
+    }
+</code></pre><p>3.HttpReques connector作用</p>
+<pre><code><span class="keyword">public</span> <span class="class"><span class="keyword">class</span> <span class="title">HttpRequest</span> </span>{
+    <span class="comment">//负责回调</span>
+    <span class="keyword">private</span> HttpCallback callback;
+    <span class="comment">//主线程Handler</span>
+    <span class="keyword">private</span> Handler handler;
+
+
+    <span class="comment">//HttpUrlConnection用到的参数</span>
+    <span class="keyword">private</span> RequestMethod method;
+    <span class="keyword">private</span> HttpConfig config;
+    <span class="keyword">private</span> String url;
+    <span class="keyword">private</span> Map&lt;String,String&gt; params;
+
+    <span class="comment">//constructor   </span>
+    <span class="keyword">public</span> <span class="title">HttpRequest</span>(String url, Map&lt;String, String&gt; params,HttpCallback callback) {
+    <span class="keyword">this</span>.method=RequestMethod.GET;
+    <span class="comment">//Handler为子类HttpHandler</span>
+    <span class="keyword">this</span>.handler = <span class="keyword">new</span> HttpHandler();
+    <span class="keyword">this</span>.config = <span class="keyword">new</span> HttpConfig();
+    <span class="keyword">this</span>.url = url;
+    <span class="keyword">this</span>.params = params;
+    <span class="keyword">this</span>.callback = callback;
+}
+
+    <span class="keyword">private</span> <span class="class"><span class="keyword">class</span> <span class="title">HttpHandler</span> <span class="keyword">extends</span>  <span class="title">Handler</span>
+    </span>{
+       <span class="comment">//接受消息并传给HttpCallback</span>
+        <span class="annotation">@Override</span>
+        <span class="keyword">public</span> <span class="keyword">void</span> <span class="title">handleMessage</span>(Message msg) {
+           callback.setCallback(msg);
+        }
+    }
+}
+</code></pre><h4 id="总结">总结</h4>
+<p>1.安卓线程间通讯需要一个线程获取另一线程的<strong>Handler</strong>。<br>2.要想具体处理接收到的message，需要继承Handler并覆盖handleMessage(Message)方法(<strong>subclass</strong>)。<br>3.像HttpCallback需要用户实现接口的情况，<strong>无法直接在Handler的子类中处理Message</strong>。应将Message传入，这时可能<strong>需要一个connnector</strong>。</p>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+</div>
+
+
+<div class="article-share" id="share">
+
+  <div data-url="http://didihe1988.github.io/2014/05/26/java-callback/" data-title="Handler&amp;Message实现安卓回调机制 | didihe1988&#39;s blog" data-tsina="null" class="share clearfix">
+  </div>
+
+</div>
+</footer>   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+ <div class="prev" >
+ <a href="/2014/07/22/HttpURLConnection/" title="jdk-HttpURLConnection类中建立http连接的过程">
+  <strong>上一篇：</strong><br/>
+  <span>
+  jdk-HttpURLConnection类中建立http连接的过程</span>
+</a>
+</div>
+
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="Show Sidebar"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">Contents</strong>
+ 
+ <ol class="toc"><li class="toc-item toc-level-4"><a class="toc-link" href="#Husky_Android_Network_Wrapper"><span class="toc-number">1.</span> <span class="toc-text">Husky Android Network Wrapper</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Hanlder和Message类简介"><span class="toc-number">2.</span> <span class="toc-text">Hanlder和Message类简介</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Husky的需求"><span class="toc-number">3.</span> <span class="toc-text">Husky的需求</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Husky的实现"><span class="toc-number">4.</span> <span class="toc-text">Husky的实现</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#总结"><span class="toc-number">5.</span> <span class="toc-text">总结</span></a></li></ol>
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="Hide Sidebar"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+
+  <div class="linkslist">
+  <p class="asidetitle">Links</p>
+    <ul>
+      <li><a href="http://bits.pw" target="_blank" title="WuChong">RenzHoly's Blog</a></li>
+      <li><a href="http://nanshu.me" target="_blank" title="Hexo">Nanshu's Blog</a></li>
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	<div class="line">
+		<span></span>
+		<div class="author"></div>
+	</div>
+	
+	
+	<section class="info">
+		<p> miao <br/>
+			 miao miao miao</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		
+		<a href="https://github.com/didihe1988" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:didihe1988@gmail.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+		<p class="copyright">Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Pacman">Jacman</a> © 2015 
+		
+		<a href="http://didihe1988.github.io/about" target="_blank" title="didihe1988">didihe1988</a>
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else
+    {
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      h  = $('article h2')
+      ah = $('article h2'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  if(ah.length==0){
+    t.css('display','none');
+  }else{
+    c.click(function(){
+      ta.css('display', 'block').addClass('fadeIn');
+    });
+    o.click(function(){
+      ta.css('display', 'none');
+    });
+    $(window).scroll(function(){
+      ta.css("top",Math.max(140,320-$(this).scrollTop()));
+    });
+  };
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#share"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="QRcode"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="Weibo"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+
+
+<div id="totop">
+<a title="Back to Top"><img src="/img/scrollup.png"/></a>
+</div>
+
+<script src="/js/totop.js"></script>
+
+
+
+
+  </body>
+</html>

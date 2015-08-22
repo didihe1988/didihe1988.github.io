@@ -1,0 +1,557 @@
+
+ <!DOCTYPE HTML>
+<html >
+<head>
+  <meta charset="UTF-8">
+  
+    <title>jdk-HttpURLConnection类中建立http连接的过程 | didihe1988&#39;s blog</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="didihe1988">
+    
+    <meta name="description" content="写在前面&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;有知乎网友说“学习源码应当是问题驱动的”，带着问题去看源代码:&amp;nbsp;&amp;nbsp;这个功能是怎样实现的？为什么要这样做？有什么好处？我觉得在阅读源码时只有带着疑问探索，才能够有所收获。最近回炉了《HTTP权威指南》，结合书中理论阅读了jdk">
+    
+    
+    
+    
+    <link rel="alternative" href="/atom.xml" title="didihe1988&#39;s blog" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+
+</head>
+
+  <body>
+    <header>
+      <div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="didihe1988&#39;s blog">didihe1988&#39;s blog</a></h1>
+				<h2 class="blog-motto"></h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="Menu">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">首页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="Search" />
+						<input type="hidden" name="q" value="site:didihe1988.github.io">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2014/07/22/HttpURLConnection/" title="jdk-HttpURLConnection类中建立http连接的过程" itemprop="url">jdk-HttpURLConnection类中建立http连接的过程</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="http://didihe1988.github.io/about" title="didihe1988" target="_blank" itemprop="author">didihe1988</a>
+		
+  <p class="article-time">
+    <time datetime="2014-07-22T03:53:26.000Z" itemprop="datePublished"> Published Jul 22 2014</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">Contents</strong>
+		
+			
+		
+		</div>
+		
+		<p>写在前面<br>&nbsp;&nbsp;&nbsp;&nbsp;有知乎网友说“<em>学习源码应当是问题驱动的</em>”，带着问题去看源代码:&nbsp;&nbsp;这个功能是怎样实现的？为什么要这样做？有什么好处？我觉得在阅读源码时只有带着疑问探索，才能够有所收获。最近回炉了《HTTP权威指南》，结合书中理论阅读了jdk的HttpURLConnection类源码。<br>&nbsp;&nbsp;&nbsp;&nbsp;HttpURLConnection类在java.net包中，继承了URLConnection。JDK文档中是这样描述的:A URLConnection with support for HTTP-specific features，也就是一个对HTTP特点进行支持的URL链接。<strong>因此，我们关注的大方向应该是HttpUrlConnection是如何支持HTTP的？和书本上所讲的一致吗？</strong></p>
+<p>我们通过单步调试下面的demo来提出具体的问题</p>
+<pre><code>    <span class="keyword">try</span> {
+        URL url=<span class="keyword">new</span> URL(<span class="string">"http://www.baidu.com"</span>);
+        HttpURLConnection connection= (HttpURLConnection) url.openConnection();
+        connection.connect();
+        connection.setRequestMethod(<span class="string">"POST"</span>);
+        connection.setDoOutput(<span class="literal">true</span>);
+        DataOutputStream stream=<span class="keyword">new</span> DataOutputStream(connection.getOutputStream());
+        stream.writeBytes(<span class="string">"hello world"</span>);
+        stream.flush();
+    } <span class="keyword">catch</span> (IOException e) {
+        e.printStackTrace();
+    }
+</code></pre><hr>
+<p>问题1.<strong>URL.openConnection()如何建立连接？是否建立了实际上的网络连接，还是等到具体输入或输出时候再建立？</strong></p>
+<p>URL类有成员变量URLStreamHandler handler, 这里URLStreamHandler类是所有流协议handler的抽象父类，封装了特定的协议(如http、ftp)建立连接的过程。<em>也就是说在运行时，handler应该会根据协议的不同，初始化为相对应的类型。</em>URL的openConnection只有短短一行，调用handler的openConnection,将具体的工作交付给handler完成。这里也体现了面向对象中”一个类只负责一项任务”的思想，减少了耦合。</p>
+<pre><code><span class="keyword">public</span> URLConnection <span class="title">openConnection</span>() <span class="keyword">throws</span> java.io.IOException {
+    <span class="keyword">return</span> handler.openConnection(<span class="keyword">this</span>);
+}
+</code></pre><p>;果然，单步调试发现，运行时handler的类型为sun.net.www.protocol.http.Handler,它是java.net.URLStreamHandler的子类，也上面的推测相吻合。<br><img src="https://github.com/didihe1988/Husky-Android-Network-Wrapper/raw/master/screenshot/handler.png" alt=""><br>下面来看它的代码。</p>
+<pre><code><span class="keyword">protected</span> java.net.URLConnection <span class="title">openConnection</span>(URL u)
+    <span class="keyword">throws</span> IOException {
+    <span class="comment">//调用下边的函数</span>
+    <span class="keyword">return</span> openConnection(u, (Proxy)<span class="keyword">null</span>);
+}
+
+<span class="keyword">protected</span> java.net.URLConnection <span class="title">openConnection</span>(URL u, Proxy p)
+    <span class="keyword">throws</span> IOException {
+    <span class="comment">//创建一个HttpURLConnectionb并返回</span>
+    <span class="keyword">return</span> <span class="keyword">new</span> HttpURLConnection(u, p, <span class="keyword">this</span>);
+}
+</code></pre><p>&nbsp;&nbsp;接着来看HttpURLConnection的构造函数:</p>
+<pre><code> <span class="comment">//sun.net.www.protocol.http.HttpURLConnection中</span>
+ <span class="keyword">protected</span> <span class="title">HttpURLConnection</span>(URL u, Proxy p, Handler handler) {
+    <span class="comment">//调用父类URLConnection的构造器</span>
+    <span class="keyword">super</span>(u);
+    <span class="comment">//初始化两个MessageHeader:requests和responses </span>
+    requests = <span class="keyword">new</span> MessageHeader();
+    responses = <span class="keyword">new</span> MessageHeader();
+    <span class="comment">//将用来创建它的handler保存起来</span>
+    <span class="keyword">this</span>.handler = handler;
+   <span class="comment">//初始化代理和缓存相关的代码，忽略。</span>
+}
+</code></pre><p>&nbsp;&nbsp;所以，openConnection只是通过handler创建了HttpURLConnection实例，做了一些初始化的工作，并没有建立实际上的网络连接。</p>
+<hr>
+<p><strong>问题2.URLConnection.connect()应当建立连接了吧?都做了哪些工作？</strong><br>&nbsp;&nbsp;可以看到connect()直接调用了私有函数plainConnect(),</p>
+<pre><code><span class="keyword">public</span> <span class="keyword">void</span> <span class="title">connect</span>() <span class="keyword">throws</span> IOException {
+    plainConnect();
+}
+</code></pre><p>接着看plainConnect()函数<br>首先展示一下plainConnect函数的流程图:<br><img src="https://github.com/didihe1988/BlogPicture/raw/master/plain_connect.png" alt=""></p>
+<p><br><br>下面对图上流程进行展开说明:<br>如果已经建立连接，那么直接返回。若没有建立连接，试一下是否能从本地缓存直接获取请求内容(查看客户机上的高速缓存)。</p>
+<pre><code><span class="keyword">protected</span> <span class="keyword">void</span> <span class="title">plainConnect</span>()  throws IOException {
+    <span class="comment">//如果已经建立连接，直接返回</span>
+    <span class="keyword">if</span> (connected) {
+        <span class="keyword">return</span>;
+    }
+
+    <span class="comment">//如果cacheHandler不为空并且允许缓存</span>
+    <span class="keyword">if</span> (cacheHandler != <span class="keyword">null</span> &amp;&amp; getUseCaches()) {
+        <span class="keyword">try</span> {
+            <span class="comment">//将url转换成uri</span>
+            URI uri = ParseUtil.toURI(url);
+            <span class="keyword">if</span> (uri != <span class="keyword">null</span>) {
+             <span class="comment">//获取cachedResponse(缓存过的响应)</span>
+             cachedResponse = cacheHandler.<span class="keyword">get</span>(uri, getRequestMethod(),...);
+             <span class="comment">//如果cachedResponse不为空，从中获取cachedHeaders和cachedInputStream</span>
+             <span class="keyword">if</span> (cachedResponse != <span class="keyword">null</span>) {
+                cachedHeaders = mapToMessageHeader(cachedResponse.getHeaders());
+                cachedInputStream = cachedResponse.getBody();
+              }
+            }
+        } <span class="keyword">catch</span> (IOException ioex) {
+            <span class="comment">// ignore and commence normal connection</span>
+        }
+        <span class="comment">//如果这两项不为空，则可以从本地缓存直接获取到请求内容，连接已建立返回</span>
+        <span class="keyword">if</span> (cachedHeaders != <span class="keyword">null</span> &amp;&amp; cachedInputStream != <span class="keyword">null</span>) {
+            connected = <span class="keyword">true</span>;
+            <span class="keyword">return</span>;
+        } <span class="keyword">else</span> {
+            <span class="comment">//cachedResponse置为空，这样可以保证jvm及时回收</span>
+            cachedResponse = <span class="keyword">null</span>;
+        }
+    }
+</code></pre><p>如果没有缓存，尝试通过以下方法建立链接，成功则当即返回<br>(1)if( instProxy != null )<br>&nbsp;&nbsp;&nbsp;&nbsp;连接到instProxy,如果不能连接，则抛异常<br>(2)else 使用系统默认的ProxySelector<br>(3)如果(2)失败，则发起直接连接</p>
+<p>看代码之前，先介绍一下instProxy和ProxySelector:<br><em>Proxy instProxy</em>是类成员变量，封装了当前的代理实例，保存了通过HttpURLConnection的构造函数传入的代理。<br><em>ProxySelector</em>根据由URL指定的不同资源类型，选择不同的代理服务器。它的成员函数select(URI uri)，基于给定的协议选择所有合适的代理，返回一个代理列表List<proxy>。</proxy></p>
+<pre><code>        <span class="comment">/*
+        如果instProxy为空,进入步骤(2)
+        可以看出，虽然理论上步骤(1)在(2)之前，但是实际上instProxy为空的可能性较大，所以把if(instProxy == null)放在前面,执行效率高。
+        */</span>
+        <span class="keyword">if</span> (instProxy == <span class="keyword">null</span>) {
+
+            <span class="comment">//获取系统默认的ProxySelector sel</span>
+            ProxySelector sel =
+                java.security.AccessController.doPrivileged(
+                    <span class="keyword">new</span> java.security.PrivilegedAction&lt;ProxySelector&gt;() {
+                        <span class="keyword">public</span> ProxySelector <span class="title">run</span>() {
+                                 <span class="keyword">return</span> ProxySelector.getDefault();
+                             }
+                         });
+            <span class="comment">/*如果sel不为空，通过select获取List&lt;Proxy&gt;，然后通过迭代器遍历List。对于List中每一个Proxy p，尝试建立连接，如果不能建立连接，则抛异常，然后继续循环，尝试下一个Proxy，直到有代理能够建立连接，则跳出循环
+            */</span>
+            <span class="keyword">if</span> (sel != <span class="keyword">null</span>) {
+                URI uri = sun.net.www.ParseUtil.toURI(url);
+                <span class="comment">//获取迭代器</span>
+                Iterator&lt;Proxy&gt; it = sel.<span class="keyword">select</span>(uri).iterator();
+                Proxy p;
+                <span class="keyword">while</span> (it.hasNext()) {
+                    <span class="comment">//获取列表中下一个代理p</span>
+                    p = it.next();
+                    <span class="keyword">try</span> {
+                        <span class="comment">//建立连接 创建一个HttpClient</span>
+                        <span class="comment">//这是第一次请求或之前请求失败过，后者getNewHttpClient的参数多了一个false</span>
+                        <span class="keyword">if</span> (!failedOnce) {
+                            http = getNewHttpClient(url, p, connectTimeout);
+                            http.setReadTimeout(readTimeout);
+                        } <span class="keyword">else</span> {
+                            <span class="comment">// make sure to construct new connection if first</span>
+                            <span class="comment">// attempt failed</span>
+                            http = getNewHttpClient(url, p, connectTimeout, <span class="keyword">false</span>);
+                            http.setReadTimeout(readTimeout);
+                        }
+                        <span class="keyword">break</span>;
+                    } <span class="keyword">catch</span> (IOException ioex) {
+                            <span class="comment">//省略了部分处理过程</span>
+                            <span class="keyword">throw</span> ioex;
+                        }
+                        <span class="keyword">continue</span>;
+                    }
+                }
+            }
+            <span class="comment">//sel为空，进入步骤(3)，直接建立连接，这里还是依据failedOnce区分</span>
+            <span class="keyword">else</span> {
+                <span class="keyword">if</span> (!failedOnce) {
+                    http = getNewHttpClient(url, <span class="keyword">null</span>, connectTimeout);
+                    http.setReadTimeout(readTimeout);
+                } <span class="keyword">else</span> {
+                    http = getNewHttpClient(url, <span class="keyword">null</span>, connectTimeout, <span class="keyword">false</span>);
+                    http.setReadTimeout(readTimeout);
+                }
+            }
+        }
+        <span class="comment">//如果instProxy不为空，进入步骤(1)</span>
+        <span class="keyword">else</span> {
+            <span class="keyword">if</span> (!failedOnce) {
+                http = getNewHttpClient(url, instProxy, connectTimeout);
+                http.setReadTimeout(readTimeout);
+            } <span class="keyword">else</span> {
+                <span class="comment">// make sure to construct new connection if first</span>
+                <span class="comment">// attempt failed</span>
+                http = getNewHttpClient(url, instProxy, connectTimeout, <span class="keyword">false</span>);
+                http.setReadTimeout(readTimeout);
+            }
+        }
+
+        <span class="comment">//通过上面三个步骤之后，连接已经建立，获取输出流</span>
+        ps = (PrintStream)http.getOutputStream();
+    } <span class="keyword">catch</span> (IOException e) {
+        <span class="keyword">throw</span> e;
+    }
+    <span class="comment">//connected置为true，表示已经建立连接</span>
+    connected = <span class="keyword">true</span>;
+}
+</code></pre><p>可以发现，三个步骤都调用了getNewHttpClient这个函数，创建了一个HttpClient，即http的客户端。</p>
+<hr>
+<p>问题3.<br>setRequestMethod方法参数是String method，而不是像Google Volley那样封装了一个Method 枚举类型。<strong>那么，如果参数不是所期望的哪几种Method，应当如何检测和处理?</strong>走起看代码:</p>
+<pre><code>首先看一下<span class="type">HttpURLConnection</span>成员变量 <span class="keyword">method</span>、methods
+//<span class="type">HTTP</span> <span class="keyword">method</span>，默认是<span class="type">GET</span>方法
+protected <span class="type">String</span> <span class="keyword">method</span> = <span class="string">"GET"</span>;
+
+//methods封装了几种有效的<span class="type">Http</span> methods
+ private <span class="keyword">static</span> final <span class="type">String</span>[] methods = {
+    <span class="string">"GET"</span>, <span class="string">"POST"</span>, <span class="string">"HEAD"</span>, <span class="string">"OPTIONS"</span>, <span class="string">"PUT"</span>, <span class="string">"DELETE"</span>, <span class="string">"TRACE"</span>
+};
+
+
+    public <span class="type">void</span> setRequestMethod(<span class="type">String</span> <span class="keyword">method</span>) throws <span class="type">ProtocolException</span> {
+
+    //boolean connected，父类<span class="type">URLConnection</span>成员变量:基于此<span class="type">URL</span>的通讯链接是否已将建立 
+    //如果已将连接，抛异常<span class="type">ProtocolException</span>,不可以重新设置方法
+    <span class="keyword">if</span> (connected) {
+        throw new <span class="type">ProtocolException</span>(<span class="string">"Can't reset method: already connected"</span>);
+    }
+
+    //将参数<span class="keyword">method</span>与methods比较
+    <span class="keyword">for</span> (<span class="type">int</span> i = <span class="number">0</span>; i &lt; methods.length; i++) {
+        //如果匹配到
+        <span class="keyword">if</span> (methods[i].equals(<span class="keyword">method</span>)) {
+            //如果是<span class="type">TRACE</span>,尝试设置允许追踪
+            <span class="keyword">if</span> (<span class="keyword">method</span>.equals(<span class="string">"TRACE"</span>)) {
+                <span class="type">SecurityManager</span> s = <span class="type">System</span>.getSecurityManager();
+                <span class="keyword">if</span> (s != null) {
+                    s.checkPermission(new <span class="type">NetPermission</span>(<span class="string">"allowHttpTrace"</span>));
+                }
+            }
+            //成员变量<span class="keyword">method</span>设为参数<span class="keyword">method</span>并返回
+            this.<span class="keyword">method</span> = <span class="keyword">method</span>;
+            <span class="keyword">return</span>;
+        }
+    }
+    //没有与methods匹配，参数无效，抛异常<span class="type">ProtocolException</span>
+    throw new <span class="type">ProtocolException</span>(<span class="string">"Invalid HTTP method: "</span> + <span class="keyword">method</span>);
+}
+</code></pre><p>&nbsp;&nbsp;看完代码后，我们有了答案:字符串数组methods包含了所有七种Http方法，setRequestMethod中用一个循环将输入的method与methods中每一种比较，如果匹配，则设置成员变量method；如果均不匹配，则抛异常。</p>
+<hr>
+<p>另:jdk1.X/jre/lib/rt.jar是runtime所需的包，当中都是已经编译过的class文件。<br>要跟踪调试这部分代码，需要在linux环境下使用OpenJDK。</p>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+</div>
+
+
+<div class="article-share" id="share">
+
+  <div data-url="http://didihe1988.github.io/2014/07/22/HttpURLConnection/" data-title="jdk-HttpURLConnection类中建立http连接的过程 | didihe1988&#39;s blog" data-tsina="null" class="share clearfix">
+  </div>
+
+</div>
+</footer>   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+ <div class="prev" >
+ <a href="/2014/10/23/thoughts/" title="碎碎念">
+  <strong>上一篇：</strong><br/>
+  <span>
+  碎碎念</span>
+</a>
+</div>
+
+
+<div class="next">
+<a href="/2014/05/26/java-callback/"  title="Handler&amp;Message实现安卓回调机制">
+ <strong>下一篇：</strong><br/> 
+ <span>Handler&amp;Message实现安卓回调机制
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="Show Sidebar"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">Contents</strong>
+ 
+ 
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="Hide Sidebar"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+
+  <div class="linkslist">
+  <p class="asidetitle">Links</p>
+    <ul>
+      <li><a href="http://bits.pw" target="_blank" title="WuChong">RenzHoly's Blog</a></li>
+      <li><a href="http://nanshu.me" target="_blank" title="Hexo">Nanshu's Blog</a></li>
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	<div class="line">
+		<span></span>
+		<div class="author"></div>
+	</div>
+	
+	
+	<section class="info">
+		<p> miao <br/>
+			 miao miao miao</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		
+		<a href="https://github.com/didihe1988" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:didihe1988@gmail.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+		<p class="copyright">Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Pacman">Jacman</a> © 2015 
+		
+		<a href="http://didihe1988.github.io/about" target="_blank" title="didihe1988">didihe1988</a>
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else
+    {
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      h  = $('article h2')
+      ah = $('article h2'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  if(ah.length==0){
+    t.css('display','none');
+  }else{
+    c.click(function(){
+      ta.css('display', 'block').addClass('fadeIn');
+    });
+    o.click(function(){
+      ta.css('display', 'none');
+    });
+    $(window).scroll(function(){
+      ta.css("top",Math.max(140,320-$(this).scrollTop()));
+    });
+  };
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#share"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="QRcode"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="Weibo"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+
+
+<div id="totop">
+<a title="Back to Top"><img src="/img/scrollup.png"/></a>
+</div>
+
+<script src="/js/totop.js"></script>
+
+
+
+
+  </body>
+</html>

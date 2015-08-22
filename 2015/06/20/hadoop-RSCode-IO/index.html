@@ -1,0 +1,605 @@
+
+ <!DOCTYPE HTML>
+<html >
+<head>
+  <meta charset="UTF-8">
+  
+    <title>基于RS码的hadoop数据传输纠错机制的实现 | didihe1988&#39;s blog</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="didihe1988">
+    
+    <meta name="description" content="一.RS码添加思路
+1.hadoop容错性的保证:hadoop中一份数据通常保存在不同Rack的多个DataNode上，并且采用crc校验和进行检验。在数据传输过程时，DataNode在接收到数据之后，会重新计算校验和，与之前计算的校验和比较，以确保数据正确。当数据在磁盘存储时，DataNode有守">
+    
+    
+    
+    
+    <link rel="alternative" href="/atom.xml" title="didihe1988&#39;s blog" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+
+</head>
+
+  <body>
+    <header>
+      <div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="didihe1988&#39;s blog">didihe1988&#39;s blog</a></h1>
+				<h2 class="blog-motto"></h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="Menu">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">首页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="Search" />
+						<input type="hidden" name="q" value="site:didihe1988.github.io">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/06/20/hadoop-RSCode-IO/" title="基于RS码的hadoop数据传输纠错机制的实现" itemprop="url">基于RS码的hadoop数据传输纠错机制的实现</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="http://didihe1988.github.io/about" title="didihe1988" target="_blank" itemprop="author">didihe1988</a>
+		
+  <p class="article-time">
+    <time datetime="2015-06-20T09:30:12.000Z" itemprop="datePublished"> Published Jun 20 2015</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">Contents</strong>
+		
+			<ol class="toc"><li class="toc-item toc-level-3"><a class="toc-link" href="#一-RS码添加思路"><span class="toc-number">1.</span> <span class="toc-text">一.RS码添加思路</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#二-从客户端API入手，分析输入输出流的函数调用过程"><span class="toc-number">2.</span> <span class="toc-text">二.从客户端API入手，分析输入输出流的函数调用过程</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#三-hadoop对write()和read()的覆盖"><span class="toc-number">3.</span> <span class="toc-text">三.hadoop对write()和read()的覆盖</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#四-RS编码译码加入位置的确定"><span class="toc-number">4.</span> <span class="toc-text">四.RS编码译码加入位置的确定</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#五-修改代码"><span class="toc-number">5.</span> <span class="toc-text">五.修改代码</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#六-运行结果"><span class="toc-number">6.</span> <span class="toc-text">六.运行结果</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#七-未完待续-考研后再见"><span class="toc-number">7.</span> <span class="toc-text">七.未完待续-考研后再见</span></a></li></ol>
+		
+		</div>
+		
+		<h3 id="一-RS码添加思路">一.RS码添加思路</h3>
+<p>1.hadoop容错性的保证:hadoop中一份数据通常保存在不同Rack的多个DataNode上，并且采用crc校验和进行检验。在数据传输过程时，DataNode在接收到数据之后，会重新计算校验和，与之前计算的校验和比较，以确保数据正确。当数据在磁盘存储时，DataNode有守护线程DataBlockScanner,定期扫描磁盘数据块，对数据进行校验，如果发现数据错误，DataNode会从其他副本处及时恢复数据。其中，crc校验和纠错的能力较弱，在这里更强调发现错误的能力。<br>因此，hadoop的高容错性是建立在多份(通常3份)副本的基础上的。<br>2.(1)总体上，我的思路是:用里德-所罗门码替代crc校验和，提供更好的纠错能力，这样DataNode在发现数据出错时，可以先尝试用RS码纠错，发现无法纠错后再从其他副本恢复。既然DataNode自己有了较强的数据纠错能力，副本数可以从三份减少到两份(每份多了一点编码冗余)，在数据量大的情况下节省的存储空间很可观。<br>(2)在运行效率上，用RS码判断是否出错，只需通过码字多项式能不能除尽生成多项式来判断，在这一环节，并不会比crc消耗太多时间。但是RS码会增加额外的编码译码时间:客户端将数据发送给DataNode时要编码，客户端向DataNode请求数据时DataNode的数据要译码。这两项都会增加时间开销，好在hadoop本来就不是为实时网络应用场景设计，因此如果编码译码效率较高(如采用)，可以采用这种以时间换空间的做法。<br>(3)另外，我想到一种减小开销的办法，hadoop在传输数据块时，是通过传输一个一个的数据包来实现的。因此可以以数据包为单位进行编码译码，一个线程负责网络I/O,另一个线程负责编码译码，边传输边译码。</p>
+<h3 id="二-从客户端API入手，分析输入输出流的函数调用过程">二.从客户端API入手，分析输入输出流的函数调用过程</h3>
+<p>1.首先介绍下客户端的输入输出函数：<br>org.apache.hadoop.fs包中的FSDataOutputStream和FSDataInputStream，分别封装了文件系统的数据输出流和数据输入流。<br>成员函数void writeUTF(String str)和String readUTF(DataInput in)：将字符串写入输出流、从输出流中读取字符串。<br>2.下面单独来看readUTF()，writeUTF()是相同的原理。<br>readUTF()应用在网络传输场景下，<strong>会依次调用两个函数readUnsignedShort()和readFully()，这两个函数都调用了read()方法,</strong><br>readUTF()采用这种机制是为了避免网络阻塞使得读取的数据不完整，readUnsignedShort()读取2字节，计算数值作为readFully()函数的参数len，readFully()会尝试多次，读取到len长度才返回，尝试多次仍不能读取到len长度，抛异常IOException。<br>3.把readUTF()过程中每次调用read(byte buf[], int off, int len)时，读取的长度len和读取的内容buf打印出来，和上面所说流程是一致的。<br><img src="https://github.com/didihe1988/BlogPicture/raw/master/read_utf.png" alt=""></p>
+<p>4.根据writeUTF()和readUTF()的这一特点，我们可以得出在数据传输时，最开始的两个字节是用来记录实际数据的长度。<br>这两个字节的关系是:当第二个字节达到256时，向第一个字节进位，实际数据的长度=第一个字节*256+第二个字节。(注:因为java的byte范围是-128到127，所以byte如果是负数，应该加上256。比如-2表示的是254，反之,(byte)254得到-2)</p>
+<p>5.附上本文采用的客户端demo:</p>
+<pre><code><span class="keyword">private</span> <span class="keyword">void</span> <span class="title">testOutputInput</span>(String fileName,String message){
+    Configuration conf = <span class="keyword">new</span> Configuration();    
+    <span class="keyword">try</span> {
+        FileSystem fs = FileSystem.<span class="keyword">get</span>(conf);
+        Path filenamePath = <span class="keyword">new</span> Path(fileName);
+        <span class="keyword">if</span> (fs.exists(filenamePath)) {
+            fs.delete(filenamePath);
+        }
+        FSDataOutputStream <span class="keyword">out</span> = fs.create(filenamePath);
+        System.<span class="keyword">out</span>.println(<span class="string">"写入字符串的长度: "</span>+message.length());
+        <span class="keyword">out</span>.writeUTF(message);
+        <span class="keyword">out</span>.flush();
+        <span class="keyword">out</span>.close();
+        FSDataInputStream <span class="keyword">in</span> = fs.open(filenamePath);
+        String receive = <span class="keyword">in</span>.readUTF();
+        System.<span class="keyword">out</span>.println(<span class="string">"接收到的字符串:"</span>);
+        System.<span class="keyword">out</span>.println(receive);
+        System.<span class="keyword">out</span>.println(<span class="string">"接收的字符串是否与写入的字符串相等:"</span>+(receive.trim()).equals(message));
+        <span class="keyword">in</span>.close();
+    } <span class="keyword">catch</span> (IOException ioe) {
+        System.err.println(<span class="string">"IOException: "</span>
+                + ioe.toString());
+    }
+}
+</code></pre><h3 id="三-hadoop对write()和read()的覆盖">三.hadoop对write()和read()的覆盖</h3>
+<p>1.下面主要分析write()和read()两个函数,正如上面所说，这两个函数分别被writeUTF()和readUTF()调用了三次。<br>DFSClient封装了hadoop的客户端,其内部类DFSOutputStream负责客户端到DataNode的数据发送。FSOutputSummer是DFSOutputStream的父类，封装了基本的输出流，负责在数据写入输出流之前计算校验和，它继承了java.io.OutputStream,覆盖了write()方法。DFSClient的内部类DFSOutputStream并没有覆盖父类FSOutputSummer的write()方法(因为需要父类提供校验和的计算)，但实现了父类的抽象方法writeChunk()。<br>数据发送的函数调用如下：</p>
+<pre><code><span class="attribute">FSOutputStream</span>::write<span class="function"><span class="params">()</span> -&gt;</span> <span class="attribute">FSOutputStream</span>::write1<span class="function"><span class="params">()</span> -&gt;</span>  <span class="attribute">DFSOutputStream</span>::writeChunk()
+</code></pre><p>下面来看FSOutputSummer的wirte()函数： 将字节数组b[]从len开始的off个字节写入输出流，对于每一个数据块(chunk)，调用wite1()执行具体的校验和计算然后写入输出流。</p>
+<pre><code><span class="comment">//b[]:要写入的数据 off:起始偏移 len:写入数据的长度</span>
+<span class="keyword">public</span> <span class="keyword">synchronized</span> <span class="keyword">void</span> <span class="title">write</span>(<span class="keyword">byte</span> b[], <span class="keyword">int</span> off, <span class="keyword">int</span> len) <span class="keyword">throws</span> IOException {
+<span class="comment">//对参数进行检测，如果出现异常情况则报错    </span>
+<span class="keyword">if</span> (off &lt; <span class="number">0</span> || len &lt; <span class="number">0</span> || off &gt; b.length - len) {
+    <span class="keyword">throw</span> <span class="keyword">new</span> ArrayIndexOutOfBoundsException();
+}
+<span class="comment">//通过write1写入，将写入长度加到n上，再次写入，直到写入n&gt;=len(要写入的长度)</span>
+ <span class="keyword">for</span> (<span class="keyword">int</span> n=<span class="number">0</span>;n&lt;len;n+=write1(b, off+n, len-n)) {
+ }
+</code></pre><p>  }</p>
+<ol>
+<li>内部类DFSInputStream负责接收DataNode到客户端的数据.它的继承关系与DFSOutputStream的继承关系并不对称：它继承了FSInputStream，并且覆盖了read()函数。我觉得原因就是它并不需要父类提供计算crc校验和的能力。</li>
+</ol>
+<pre><code>  @<span class="type">Override</span>
+  public synchronized <span class="type">int</span> read(byte buf[], <span class="type">int</span> off, <span class="type">int</span> len) throws <span class="type">IOException</span> {
+  //检查客户端和<span class="type">DFSInputStream</span>对象是打开的，否则抛异常
+  checkOpen();
+  <span class="keyword">if</span> (closed) {
+    throw new <span class="type">IOException</span>(<span class="string">"Stream closed"</span>);
+  }
+  failures = <span class="number">0</span>;
+
+  //如果还未到文件尾
+  <span class="keyword">if</span> (pos &lt; getFileLength()) {
+    //retries:重试次数 每次尝试读取失败后减<span class="number">1</span>
+    <span class="type">int</span> retries = <span class="number">2</span>;
+    <span class="keyword">while</span> (retries &gt; <span class="number">0</span>) {
+      <span class="keyword">try</span> {
+        //如果已经读到了数据块的末尾
+        <span class="keyword">if</span> (pos &gt; blockEnd) {
+          currentNode = blockSeekTo(pos);
+        }
+        //计算读取长度realLen
+        <span class="type">int</span> realLen = <span class="type">Math</span>.min(len, (<span class="type">int</span>) (blockEnd - pos + <span class="number">1</span>));
+        //读入数据
+        <span class="type">int</span> <span class="literal">result</span> = readBuffer(buf, off, realLen);
+        //如果成功读取数据，读取位置pos+=本次读取长度<span class="literal">result</span>
+        <span class="keyword">if</span> (<span class="literal">result</span> &gt;= <span class="number">0</span>) {
+          pos += <span class="literal">result</span>;
+        } <span class="keyword">else</span> {
+          throw new <span class="type">IOException</span>(<span class="string">"Unexpected EOS from the reader"</span>);
+        }
+        <span class="keyword">return</span> <span class="literal">result</span>;
+      } catch (<span class="type">ChecksumException</span> ce) {
+        throw ce;            
+      } catch (<span class="type">IOException</span> e) {
+        //已经失败一次
+        <span class="keyword">if</span> (retries == <span class="number">1</span>) {
+          <span class="type">LOG</span>.warn(<span class="string">"DFS Read: "</span> + <span class="type">StringUtils</span>.stringifyException(e));
+        }
+        blockEnd = -<span class="number">1</span>;
+        <span class="keyword">if</span> (currentNode != null) { addToDeadNodes(currentNode); }
+        //已经失败了两次，抛异常
+        <span class="keyword">if</span> (--retries == <span class="number">0</span>) {
+          throw e;
+        }
+      }
+    }
+   }
+  <span class="keyword">return</span> -<span class="number">1</span>;
+  }
+</code></pre><h3 id="四-RS编码译码加入位置的确定">四.RS编码译码加入位置的确定</h3>
+<p>RS编码译码的加入，应该对用户透明，而且越过校验和。因为一旦在计算crc后修改数据，DataNode会检测出来。<br>1.数据发送时RS编码的位置：<br>FSOutputSummer的write1()函数计算了crc校验和，因此应该在write()循环调用write1()前加入RS编码。也就是说，<code>for (int n=0;n&lt;len;n+=write1(b, off+n, len-n))</code>中，byte[] b应该是编码后的数据，len应该是编码后的长度。<br>2.数据接收时RS译码的位置:<br>readUTF()会调用三次read()，前两次read()函数的参数len是1，因为这是readUnsignedShort()函数在读取实际数据的长度。第三次read()的len根据前两次read计算得出，就算实际数据很少，但是还有部分crc校验和的数据，因此这次的len不可能等于1。所以可以根据这点，改动DFSInputStream的read()函数，当本次len不为1时，读取的是实际数据，先进行RS译码，再交付给客户端。</p>
+<h3 id="五-修改代码">五.修改代码</h3>
+<p>1.数据发送:修改FSOutputSummer类的wirte方法，在真正的网络传输之前，进行RS编码。并且故意修改编码后的数据，模拟传输、存储过程中出错的情况。</p>
+<pre><code>public synchronized void write(<span class="typename">byte</span> b[], <span class="typename">int</span> off, <span class="typename">int</span> <span class="built_in">len</span>)
+throws IOException {
+  System.out.<span class="built_in">println</span>(<span class="string">"write:"</span>);
+ <span class="comment">//打印输入数据的长度</span>
+  System.out.<span class="built_in">println</span>(<span class="string">"len: "</span>+<span class="built_in">len</span>);
+  System.out.<span class="built_in">println</span>(<span class="string">"bytes: "</span>);
+ <span class="comment">//打印输入数据的内容</span>
+  <span class="keyword">for</span>(<span class="typename">byte</span> a:b){
+      System.out.<span class="built_in">print</span>(a+<span class="string">" "</span>);
+  }
+  System.out.<span class="built_in">println</span>(<span class="string">" "</span>);
+
+  <span class="comment">//计算increasedLen，便于将原byte数组转换成编码后的byte数据</span>
+  <span class="comment">//以223字节为例，经过RS编码之后转换成255字节 增加的字节数为32字节</span>
+  <span class="comment">//以414字节为例，经过RS编码之后转换成510字节 增加的字节数为96字节 </span>
+  <span class="typename">int</span> increasedLen=calIncreasedLen(<span class="built_in">len</span><span class="number">-2</span>);
+  <span class="typename">int</span> newLen=<span class="built_in">len</span>+increasedLen;
+  RSEncoder encoder=<span class="built_in">new</span> RSEncoder();
+  <span class="typename">byte</span>[] encodeBytes=<span class="built_in">new</span> <span class="typename">byte</span>[<span class="built_in">len</span><span class="number">-2</span>];
+  <span class="comment">//以223字节为例，encodeBytes:从0到223 b:从2到225</span>
+  <span class="comment">//以414字节为例，encodeBytes:从0到414 b:从2到416</span>
+  <span class="keyword">for</span>(<span class="typename">int</span> i=off<span class="number">+2</span>;i&lt;off+<span class="built_in">len</span>;i++){
+      <span class="comment">//前面两个字节是 0、字符数</span>
+      encodeBytes[i<span class="number">-2</span>]=b[i];
+  }
+ <span class="comment">//编码获取编码后的数据</span>
+  <span class="typename">byte</span>[] results=encoder.encode(<span class="built_in">new</span> String(encodeBytes));
+ <span class="comment">//故意修改编码后的数据，模拟传输、存储过程中出错的情况</span>
+  results<span class="number">[0</span>]=<span class="string">'a'</span>;
+  <span class="typename">byte</span> newBytes[]=<span class="built_in">new</span> <span class="typename">byte</span>[b.length+calIncreasedLen(<span class="built_in">len</span><span class="number">-2</span>)];
+ <span class="comment">//计算原长度len-2编码后对应的两个长度字节</span>
+  <span class="typename">byte</span>[] twoBytes=toRScodeLen(<span class="built_in">len</span><span class="number">-2</span>);
+  newBytes<span class="number">[0</span>]=twoBytes<span class="number">[0</span>];
+  newBytes<span class="number">[1</span>]=twoBytes<span class="number">[1</span>];
+
+  <span class="comment">//编码后的数据写入newBytes</span>
+  <span class="keyword">for</span>(<span class="typename">int</span> i<span class="number">=0</span>;i&lt;results.length;i++){
+         newBytes[i<span class="number">+2</span>]=results[i];
+  }
+
+ <span class="comment">//把原byte数组后边CRC校验和部分写入newBytes,其实后面均为0，但不知道会不会有特殊情况s</span>
+  <span class="comment">//以223字节为例，b从225开始 newBytes从257开始</span>
+  <span class="comment">//以414字节为例，b从416开始 newBytes从512开始</span>
+  <span class="keyword">for</span>(<span class="typename">int</span> i=<span class="built_in">len</span>+off;i&lt;b.length;i++){
+         newBytes[i+increasedLen]=b[i];
+  }
+  System.out.<span class="built_in">println</span>(<span class="string">""</span>);
+  System.out.<span class="built_in">println</span>(<span class="string">"newBytes: "</span>);
+  <span class="keyword">for</span>(<span class="typename">byte</span> newByte:newBytes){
+      System.out.<span class="built_in">print</span>(newByte+<span class="string">" "</span>);
+  }
+  <span class="comment">//边计算CRC校验和边写入流中</span>
+ <span class="keyword">for</span> (<span class="typename">int</span> n<span class="number">=0</span>;n&lt;newLen;n+=write1(newBytes, off+n, newLen-n)) {
+    }
+ <span class="comment">/*原程序
+  *   for (int n=0;n&lt;len;n+=write1(b, off+n, len-n)) {
+  *   }
+  */</span>
+}
+</code></pre><p>下面是两个私有函数，calIncreasedLen:用于计算增加的长度，toRScodeLen():用于计算编码后的前两个字节是多少。</p>
+<pre><code> <span class="comment">//计算增加的长度</span>
+  <span class="keyword">private</span> <span class="keyword">int</span> <span class="title">calIncreasedLen</span>(<span class="keyword">int</span> rawLen){
+      <span class="comment">//原始长度/223后向上去整,得到编码的单元数</span>
+      <span class="keyword">int</span> unitCount=(<span class="keyword">int</span>)Math.ceil(rawLen/<span class="number">223.0</span>);
+      <span class="comment">//255*编码的单元数得到编码后长度</span>
+      <span class="keyword">int</span> len=<span class="number">255</span>*unitCount;
+      <span class="comment">//二者相减得到增加的长度</span>
+      <span class="keyword">return</span> len-rawLen;
+  }
+
+  <span class="comment">//计算前两个字节</span>
+  <span class="keyword">private</span> <span class="keyword">byte</span>[] <span class="title">toRScodeLen</span>(<span class="keyword">int</span> rawLen){
+      <span class="comment">//原始长度/223后向上取整,得到编码的单元数</span>
+      <span class="keyword">int</span> unitCount=(<span class="keyword">int</span>)Math.ceil(rawLen/<span class="number">223.0</span>);
+      <span class="comment">//255*编码的单元数得到编码后长度</span>
+      <span class="keyword">int</span> len=<span class="number">255</span>*unitCount;
+      <span class="comment">//计算前两个字节</span>
+      <span class="keyword">byte</span> firstByte=(<span class="keyword">byte</span>)(len/<span class="number">256</span>);
+      <span class="keyword">byte</span> secByte=(<span class="keyword">byte</span>)(len%<span class="number">256</span>);
+      <span class="keyword">return</span> <span class="keyword">new</span> <span class="keyword">byte</span>[]{firstByte,secByte};
+  }
+</code></pre><p>2.数据接收:修改DFSClient的内部类DFSInputStream的read()方法，在返回读取的数据之前，进行RS译码。</p>
+<pre><code>@<span class="type">Override</span>
+public synchronized <span class="type">int</span> read(byte buf[], <span class="type">int</span> off, <span class="type">int</span> len) throws <span class="type">IOException</span> {
+  <span class="type">System</span>.<span class="keyword">out</span>.println(<span class="string">"read:"</span>);
+  //输出读取的长度
+  <span class="type">System</span>.<span class="keyword">out</span>.println(<span class="string">"len:"</span>+len);
+  //检查客户端和<span class="type">DFSInputStream</span>对象是打开的，否则抛异常
+  checkOpen();
+  <span class="keyword">if</span> (closed) {
+    throw new <span class="type">IOException</span>(<span class="string">"Stream closed"</span>);
+  }
+  failures = <span class="number">0</span>;
+  <span class="type">System</span>.<span class="keyword">out</span>.println(<span class="string">"filelength: "</span>+getFileLength());
+
+  //如果还未到文件尾
+  <span class="keyword">if</span> (pos &lt; getFileLength()) {
+    //retries重试次数
+    <span class="type">int</span> retries = <span class="number">2</span>;
+    <span class="keyword">while</span> (retries &gt; <span class="number">0</span>) {
+      <span class="keyword">try</span> {
+        //如果已经读到了数据块的末尾
+        <span class="keyword">if</span> (pos &gt; blockEnd) {
+          currentNode = blockSeekTo(pos);
+        }
+        //计算读取长度realLen 写博客时可以画图说明
+        <span class="type">int</span> realLen = <span class="type">Math</span>.min(len, (<span class="type">int</span>) (blockEnd - pos + <span class="number">1</span>));
+        //读入数据
+        <span class="type">int</span> <span class="literal">result</span> = readBuffer(buf, off, realLen);
+        <span class="type">System</span>.<span class="keyword">out</span>.println(<span class="string">"after readBuffer:"</span>);
+        <span class="type">System</span>.<span class="keyword">out</span>.println(<span class="string">"buffer:"</span>);
+         //输出读取的内容
+        <span class="keyword">for</span>(byte b:buf){
+            <span class="type">System</span>.<span class="keyword">out</span>.print(b+<span class="string">" "</span>);
+        }
+        <span class="type">System</span>.<span class="keyword">out</span>.println(<span class="string">""</span>);
+        <span class="keyword">if</span> (<span class="literal">result</span> &gt;= <span class="number">0</span>) {
+          pos += <span class="literal">result</span>;
+        } <span class="keyword">else</span> {
+          // got a <span class="type">EOS</span> <span class="keyword">from</span> reader though we expect more data on it.
+          throw new <span class="type">IOException</span>(<span class="string">"Unexpected EOS from the reader"</span>);
+        }
+        <span class="keyword">if</span> (stats != null &amp;&amp; <span class="literal">result</span> != -<span class="number">1</span>) {
+          stats.incrementBytesRead(<span class="literal">result</span>);
+        }
+
+        //len不为<span class="number">1</span>，说明是readFully()调用，此时buf中数据就是编码之后的数据，进行译码。
+        <span class="keyword">if</span>(len!=<span class="number">1</span>){
+            <span class="type">RSDecoder</span> decoder=new <span class="type">RSDecoder</span>();
+            byte[] decodeBytes=new byte[<span class="number">255</span>];
+            <span class="keyword">for</span>(<span class="type">int</span> i=<span class="number">0</span>;i&lt;<span class="number">255</span>;i++){
+                decodeBytes[i]=buf[i];
+            }
+            //译码之后得到了原始数据，替换掉buf中编码的数据
+            <span class="type">String</span> receive=decoder.decode(decodeBytes);
+            byte[] reveiceBytes=receive.getBytes();
+            <span class="keyword">for</span>(<span class="type">int</span> i=<span class="number">0</span>;i&lt;reveiceBytes.length;i++){
+                buf[i]=reveiceBytes[i];
+            }
+            //冗余部分不再需要，全部置为<span class="number">0</span>
+            <span class="keyword">for</span>(<span class="type">int</span> i=reveiceBytes.length;i&lt;buf.length;i++){
+                buf[i]=<span class="number">0</span>;
+            }
+        }
+        <span class="keyword">return</span> <span class="literal">result</span>;
+      }
+      //省略了未改动的异常处理过程
+    }
+  }
+
+  <span class="keyword">return</span> -<span class="number">1</span>;
+}
+</code></pre><h3 id="六-运行结果">六.运行结果</h3>
+<p>运行测试demo:<br></p>
+<ol>
+<li>写入过程:可以看出默认的数据块是64M，输入的字符串长度为223，但Client准备写入的长度多了两字节，这两字节就是前面所用的用来记录数据长度的。0*256+(256-33)=223<br><img src="https://github.com/didihe1988/BlogPicture/raw/master/hadoop_rs1.png" alt=""></li>
+</ol>
+<p>2.RS编码之后，数据长度由223变成225,相应的修改前两个字节。0*256+(256-1)=255。同时用编码后的数据替代原数据，后面的预留的crc校验和位置保持不变。<br>  <img src="https://github.com/didihe1988/BlogPicture/raw/master/hadoop_rs2.png" alt=""></p>
+<p>3.读取过程: readUTF()，开始调用readUnsignedShort()(调用两次read)读取2字节，从而获得真正数据的长度(len=255)，然后调用readFully()(调用一次read)读取255个字节。可以看到，第三次读取的buffer为97 101 97…，就是编码后的数据。<br> <img src="https://github.com/didihe1988/BlogPicture/raw/master/hadoop_rs3.png.png" alt=""></p>
+<p>4.将读入的255字节进行RS译码，从而对传输过程中的错误纠错，得到原始的字符串<br> <img src="https://github.com/didihe1988/BlogPicture/raw/master/hadoop_rs4.png.png" alt=""></p>
+<h3 id="七-未完待续-考研后再见">七.未完待续-考研后再见</h3>
+<p>1.为什么不用RS码直接替代crc校验码?<br>因为crc校验码涉及到hadoop数据相关的多个类，要把crc换成rs码，需要改动很多类。 一次改动如此之多，程序容易出问题。所以我的计划是分几步改动，这样可以每次”集中主要力量，解决主要矛盾”:<br>(1)本文的改动集中在数据传输过程，搞清楚了DataNode和DFSClient之间数据传输的流程。<br>(2)然后可以再修改数据存储过程:模拟数据在磁盘上出错的过程，修改DataBlockScanner，增加RS译码的数据纠错过程，并且在心跳包中增加对NameNode的汇报，告知NameNode检测处错误并且已经恢复。<br>(3)两个过程都通过之后，再用RS码替代crc码:修改(1)、(2)中刻意避开crc码的地方，把RS编码译码移动到更加合理的位置。<br>2.要准备复习考研了，幸好这是我的自娱自乐，没有deadline，可以自由发挥。考研后再见！</p>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+</div>
+
+
+<div class="article-share" id="share">
+
+  <div data-url="http://didihe1988.github.io/2015/06/20/hadoop-RSCode-IO/" data-title="基于RS码的hadoop数据传输纠错机制的实现 | didihe1988&#39;s blog" data-tsina="null" class="share clearfix">
+  </div>
+
+</div>
+</footer>   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+
+<div class="next">
+<a href="/2015/05/10/hadoop-BlockReceiver/"  title="Hadoop-DataNode的数据接收:BlockReceiver">
+ <strong>下一篇：</strong><br/> 
+ <span>Hadoop-DataNode的数据接收:BlockReceiver
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="Show Sidebar"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">Contents</strong>
+ 
+ <ol class="toc"><li class="toc-item toc-level-3"><a class="toc-link" href="#一-RS码添加思路"><span class="toc-number">1.</span> <span class="toc-text">一.RS码添加思路</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#二-从客户端API入手，分析输入输出流的函数调用过程"><span class="toc-number">2.</span> <span class="toc-text">二.从客户端API入手，分析输入输出流的函数调用过程</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#三-hadoop对write()和read()的覆盖"><span class="toc-number">3.</span> <span class="toc-text">三.hadoop对write()和read()的覆盖</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#四-RS编码译码加入位置的确定"><span class="toc-number">4.</span> <span class="toc-text">四.RS编码译码加入位置的确定</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#五-修改代码"><span class="toc-number">5.</span> <span class="toc-text">五.修改代码</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#六-运行结果"><span class="toc-number">6.</span> <span class="toc-text">六.运行结果</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#七-未完待续-考研后再见"><span class="toc-number">7.</span> <span class="toc-text">七.未完待续-考研后再见</span></a></li></ol>
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="Hide Sidebar"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+
+  <div class="linkslist">
+  <p class="asidetitle">Links</p>
+    <ul>
+      <li><a href="http://bits.pw" target="_blank" title="WuChong">RenzHoly's Blog</a></li>
+      <li><a href="http://nanshu.me" target="_blank" title="Hexo">Nanshu's Blog</a></li>
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	<div class="line">
+		<span></span>
+		<div class="author"></div>
+	</div>
+	
+	
+	<section class="info">
+		<p> miao <br/>
+			 miao miao miao</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		
+		<a href="https://github.com/didihe1988" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:didihe1988@gmail.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+		<p class="copyright">Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Pacman">Jacman</a> © 2015 
+		
+		<a href="http://didihe1988.github.io/about" target="_blank" title="didihe1988">didihe1988</a>
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else
+    {
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      h  = $('article h2')
+      ah = $('article h2'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  if(ah.length==0){
+    t.css('display','none');
+  }else{
+    c.click(function(){
+      ta.css('display', 'block').addClass('fadeIn');
+    });
+    o.click(function(){
+      ta.css('display', 'none');
+    });
+    $(window).scroll(function(){
+      ta.css("top",Math.max(140,320-$(this).scrollTop()));
+    });
+  };
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#share"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="QRcode"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="Weibo"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+
+
+<div id="totop">
+<a title="Back to Top"><img src="/img/scrollup.png"/></a>
+</div>
+
+<script src="/js/totop.js"></script>
+
+
+
+
+  </body>
+</html>

@@ -1,0 +1,438 @@
+
+ <!DOCTYPE HTML>
+<html >
+<head>
+  <meta charset="UTF-8">
+  
+    <title>Spring-AnnotatedElementUtils类中递归和Template Method设计模式的使用 | didihe1988&#39;s blog</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="didihe1988">
+    
+    <meta name="description" content="首先介绍一下本文涉及到的几个点:
+1.java.lang.reflect包中的AnnotatedElement类，代表了当前程序的一个注解元素，这个接口允许通过反射机制读取注解。
+getAnnotations():返回此元素上的所有注释 
+getDeclaredAnnotations():返回直接存">
+    
+    
+    
+    
+    <link rel="alternative" href="/atom.xml" title="didihe1988&#39;s blog" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+
+</head>
+
+  <body>
+    <header>
+      <div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="didihe1988&#39;s blog">didihe1988&#39;s blog</a></h1>
+				<h2 class="blog-motto"></h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="Menu">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">首页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="Search" />
+						<input type="hidden" name="q" value="site:didihe1988.github.io">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2014/12/29/AnnotatedElementUtils/" title="Spring-AnnotatedElementUtils类中递归和Template Method设计模式的使用" itemprop="url">Spring-AnnotatedElementUtils类中递归和Template Method设计模式的使用</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="http://didihe1988.github.io/about" title="didihe1988" target="_blank" itemprop="author">didihe1988</a>
+		
+  <p class="article-time">
+    <time datetime="2014-12-29T05:36:20.000Z" itemprop="datePublished"> Published Dec 29 2014</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">Contents</strong>
+		
+			<ol class="toc"><li class="toc-item toc-level-4"><a class="toc-link" href="#首先介绍一下本文涉及到的几个点:"><span class="toc-number">1.</span> <span class="toc-text">首先介绍一下本文涉及到的几个点:</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#开始跟踪调试AnnotatedElementUtils"><span class="toc-number">2.</span> <span class="toc-text">开始跟踪调试AnnotatedElementUtils</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#总结:"><span class="toc-number">3.</span> <span class="toc-text">总结:</span></a></li></ol>
+		
+		</div>
+		
+		<h4 id="首先介绍一下本文涉及到的几个点:">首先介绍一下本文涉及到的几个点:</h4>
+<p>1.java.lang.reflect包中的AnnotatedElement类，代表了当前程序的一个注解元素，这个接口允许通过反射机制读取注解。</p>
+<pre><code><span class="function">getAnnotations</span>()<span class="value">:返回此元素上的所有注释 
+<span class="function">getDeclaredAnnotations</span>():返回直接存在于此元素上的所有注释，不像此接口的其他方法，这种方法忽略继承的注解</span>
+</code></pre><p>2.org.springframework.core.annotation包中的AnnotatedElementUtils类,提供了在AnnotatedElement(注解元素)上寻找注解的实用方法。其中本文单步调试的<em>isAnnotated()</em>函数，是用来判断注解元素上是否有所要找的注解类型。<br>3.Template Method模式:<em>定义一个操作中算法的骨架，而将一些步骤延迟到子类中。不改变算法的结构而重新定义它的步骤。</em>适用于几个互不相同但在概念上相似的过程，每个过程中(子类中)的变化是相互耦合的，因为它们都与某个特定的过程有过。</p>
+<hr>
+<h4 id="开始跟踪调试AnnotatedElementUtils">开始跟踪调试AnnotatedElementUtils</h4>
+<p>1.步入函数AnnotatedElementUtils.isAnnotated(method, annotationType)<br>上来一个这么长的return好反人类⊙﹏⊙，return 的流程是:<br>Processor构造函数 —&gt; process()函数，获取返回值 —&gt;  Boolean.TRUE.equals与返回值比较</p>
+<pre><code><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">boolean</span> <span class="title">isAnnotated</span>(AnnotatedElement element, String annotationType) {
+
+  <span class="keyword">return</span> Boolean.TRUE.equals(process(element, annotationType, <span class="keyword">false</span>, <span class="keyword">new</span> Processor&lt;Boolean&gt;() {
+    <span class="comment">//调用该方法返回Boolean.TRUE</span>
+    <span class="annotation">@Override</span>
+    <span class="keyword">public</span> Boolean <span class="title">process</span>(Annotation annotation, <span class="keyword">int</span> metaDepth) {
+        <span class="keyword">return</span> Boolean.TRUE;
+    }
+    <span class="annotation">@Override</span>
+    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title">postProcess</span>(Annotation annotation, Boolean result) {
+    }
+   }<span class="comment">//Processor构造函数结束</span>
+  )<span class="comment">//process函数结束</span>
+ );<span class="comment">//return语句结束</span>
+}<span class="comment">//isAnnotated函数结束</span>
+</code></pre><p>之所以不直接返回true，是因为:Processor<t>是一个interface，成员函数process()的返回类型也是T。要实现一个返回true或false的Processor,必须使用true、false的封装类型Boolean,即Processor&lt; Boolean&gt;，因此对应的成员函数process()的返回类型是Boolean。<br>当process函数(AnnotatedElementUtils的内部函数，并非Processor的成员函数)中找到了给定的注解类型,则会调用processor.process()返回Boolean.TRUE,如果没找到则返回null。这样再与Boolean.TRUE比较，返回true或是false。</t></p>
+<p> 2.步入process方法,调用了递归函数doProcess</p>
+<pre><code><span class="keyword">private</span> <span class="keyword">static</span> &lt;T&gt; T <span class="title">process</span>(AnnotatedElement element, String annotationType, <span class="keyword">boolean</span> traverseClassHierarchy,Processor&lt;T&gt; processor) {
+  <span class="keyword">try</span> {
+       <span class="keyword">return</span> doProcess(element, annotationType, traverseClassHierarchy, processor,
+     <span class="keyword">new</span> HashSet&lt;AnnotatedElement&gt;(), <span class="number">0</span>);
+  }
+  <span class="keyword">catch</span> (Throwable ex) {
+   <span class="keyword">throw</span> <span class="keyword">new</span> IllegalStateException(<span class="string">"Failed to introspect annotations: "</span> + element, ex);
+  }
+ }
+</code></pre><p>参数中的的Processor是AnnotatedElementUtils中的泛型接口，要想使用必须先实现，由此实现了回调功能。</p>
+<pre><code>private <span class="keyword">static</span> <span class="keyword">interface</span> <span class="type">Processor</span>&lt;T&gt; {
+  //用来处理注解
+  T process(<span class="type">Annotation</span> annotation, <span class="type">int</span> metaDepth);
+  <span class="type">void</span> postProcess(<span class="type">Annotation</span> annotation, T <span class="literal">result</span>);
+ }
+</code></pre><p>3.步入doProcess中:<br>doProcess执行具体的查找操作，通过set集合来记录已访问的注解元素，避免无尽的递归。</p>
+<pre><code>  /**
+  * @param element 注解元素
+  * @param annotationType 要寻找的注解类型
+  * @param traverseClassHierarchy 是否递归地遍历类层次
+  * @param processor <span class="type">Processor</span>&lt;<span class="type">Boolean</span>&gt;的实例
+  * @param visited 已经访问了的注解元素的集合
+  * @param metaDepth 当前注解相对于初始注解的深度
+  */   
+    //java.reflect.<span class="type">AnnotatedElement</span>
+
+ //泛型中的T是什么?<span class="type">Boolean</span>
+ private <span class="keyword">static</span> &lt;T&gt; T doProcess(<span class="type">AnnotatedElement</span> element, <span class="type">String</span> annotationType, boolean traverseClassHierarchy,<span class="type">Processor</span>&lt;T&gt; processor, <span class="type">Set</span>&lt;<span class="type">AnnotatedElement</span>&gt; visited, <span class="type">int</span> metaDepth) {
+
+    //向<span class="type">set</span>中添加此元素。若visited.add()返回<span class="literal">false</span>，表明这个注解元素已经访问过了，那么不进行处理，直接跳到最下面返回null。
+  <span class="keyword">if</span> (visited.add(element)) {
+
+   //获得该元素所含的的注解数组
+   <span class="type">Annotation</span>[] annotations =
+     (traverseClassHierarchy ? element.getDeclaredAnnotations() : element.getAnnotations());
+   //循环处理注解数组
+   <span class="keyword">for</span> (<span class="type">Annotation</span> annotation : annotations) {
+       //如果annotation的注解类型等于参数annotationType
+       <span class="keyword">if</span> (annotation.annotationType().getName().equals(annotationType) || metaDepth &gt; <span class="number">0</span>){
+            //对于<span class="type">Processor</span>&lt;<span class="type">Boolean</span>&gt;来说，相当于<span class="type">Boolean</span> <span class="literal">result</span>=<span class="type">Boolean</span>.<span class="type">TRUE</span>;
+            T <span class="literal">result</span> = processor.process(annotation, metaDepth);
+            <span class="keyword">if</span> (<span class="literal">result</span> != null) {
+                <span class="keyword">return</span> <span class="literal">result</span>;
+            }
+            //处理的结果为空，则递归调用doProcess，注意此时的深度+<span class="number">1</span>
+            <span class="literal">result</span> = doProcess(annotation.annotationType(), annotationType, traverseClassHierarchy,processor, visited, metaDepth + <span class="number">1</span>);
+            //如果递归调用doProcess得到的结果不为空，则进行后处理postProcess
+            <span class="keyword">if</span> (<span class="literal">result</span> != null) {
+                processor.postProcess(annotation, <span class="literal">result</span>);
+                <span class="keyword">return</span> <span class="literal">result</span>;
+            }
+        }
+   }
+   //省略了traverseClassHierarchy，遍历类层次情况的代码
+  <span class="keyword">return</span> null;
+ }
+</code></pre><hr>
+<h4 id="总结:">总结:</h4>
+<p>1.<strong>递归的实现</strong>:和大多数递归的写法类似，用一个函数(process)来初始化具体进行递归的函数(doProcess)。有新意的地方是，这里通过一个Set集合来记录已经访问的注解元素，以此来避免重复的递归,用过metaDepth来记录递归的深度。<br>2.<strong>设计模式</strong>:AnnotatedElementUtils类中找到注解元素的过程是相同的，都是通过doProcess函数中对注解元素的遍历。但找到后进行的处理却有所区别，具体的处理取决于对Process接口的实现。将相同的步骤提取出来，将不同的操作延迟到了子类中(这里将不同操作交付给了接口实现),这是Template Method的应用。</p>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+</div>
+
+
+<div class="article-share" id="share">
+
+  <div data-url="http://didihe1988.github.io/2014/12/29/AnnotatedElementUtils/" data-title="Spring-AnnotatedElementUtils类中递归和Template Method设计模式的使用 | didihe1988&#39;s blog" data-tsina="null" class="share clearfix">
+  </div>
+
+</div>
+</footer>   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+ <div class="prev" >
+ <a href="/2015/05/10/hadoop-BlockReceiver/" title="Hadoop-DataNode的数据接收:BlockReceiver">
+  <strong>上一篇：</strong><br/>
+  <span>
+  Hadoop-DataNode的数据接收:BlockReceiver</span>
+</a>
+</div>
+
+
+<div class="next">
+<a href="/2014/11/27/spring-function-learning/"  title="结合《重构》和《Effective Java》的spring函数风格学习">
+ <strong>下一篇：</strong><br/> 
+ <span>结合《重构》和《Effective Java》的spring函数风格学习
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="Show Sidebar"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">Contents</strong>
+ 
+ <ol class="toc"><li class="toc-item toc-level-4"><a class="toc-link" href="#首先介绍一下本文涉及到的几个点:"><span class="toc-number">1.</span> <span class="toc-text">首先介绍一下本文涉及到的几个点:</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#开始跟踪调试AnnotatedElementUtils"><span class="toc-number">2.</span> <span class="toc-text">开始跟踪调试AnnotatedElementUtils</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#总结:"><span class="toc-number">3.</span> <span class="toc-text">总结:</span></a></li></ol>
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="Hide Sidebar"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+
+  <div class="linkslist">
+  <p class="asidetitle">Links</p>
+    <ul>
+      <li><a href="http://bits.pw" target="_blank" title="WuChong">RenzHoly's Blog</a></li>
+      <li><a href="http://nanshu.me" target="_blank" title="Hexo">Nanshu's Blog</a></li>
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	<div class="line">
+		<span></span>
+		<div class="author"></div>
+	</div>
+	
+	
+	<section class="info">
+		<p> miao <br/>
+			 miao miao miao</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		
+		<a href="https://github.com/didihe1988" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:didihe1988@gmail.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+		<p class="copyright">Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Pacman">Jacman</a> © 2015 
+		
+		<a href="http://didihe1988.github.io/about" target="_blank" title="didihe1988">didihe1988</a>
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else
+    {
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      h  = $('article h2')
+      ah = $('article h2'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  if(ah.length==0){
+    t.css('display','none');
+  }else{
+    c.click(function(){
+      ta.css('display', 'block').addClass('fadeIn');
+    });
+    o.click(function(){
+      ta.css('display', 'none');
+    });
+    $(window).scroll(function(){
+      ta.css("top",Math.max(140,320-$(this).scrollTop()));
+    });
+  };
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#share"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="QRcode"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="Weibo"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+
+
+<div id="totop">
+<a title="Back to Top"><img src="/img/scrollup.png"/></a>
+</div>
+
+<script src="/js/totop.js"></script>
+
+
+
+
+  </body>
+</html>

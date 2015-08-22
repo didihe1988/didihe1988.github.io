@@ -1,0 +1,415 @@
+
+ <!DOCTYPE HTML>
+<html >
+<head>
+  <meta charset="UTF-8">
+  
+    <title>结合《重构》和《Effective Java》的spring函数风格学习 | didihe1988&#39;s blog</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="didihe1988">
+    
+    <meta name="description" content="本文是对Spring函数的学习，每条分析对应了《重构》《Effective Java》里的点。
+《重构》10.7Preserve Whole Object(保持对象完整)有时候，将同一对象的若干项数据作为参数，传递给某个函数。这样做的问题在于:万一将来被调用的函数需要新的数据项，就必须查找并修改此函">
+    
+    
+    
+    
+    <link rel="alternative" href="/atom.xml" title="didihe1988&#39;s blog" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+
+</head>
+
+  <body>
+    <header>
+      <div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="didihe1988&#39;s blog">didihe1988&#39;s blog</a></h1>
+				<h2 class="blog-motto"></h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="Menu">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">首页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="Search" />
+						<input type="hidden" name="q" value="site:didihe1988.github.io">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2014/11/27/spring-function-learning/" title="结合《重构》和《Effective Java》的spring函数风格学习" itemprop="url">结合《重构》和《Effective Java》的spring函数风格学习</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="http://didihe1988.github.io/about" title="didihe1988" target="_blank" itemprop="author">didihe1988</a>
+		
+  <p class="article-time">
+    <time datetime="2014-11-27T02:07:10.000Z" itemprop="datePublished"> Published Nov 27 2014</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">Contents</strong>
+		
+			
+		
+		</div>
+		
+		<p>本文是对Spring函数的学习，每条分析对应了《重构》《Effective Java》里的点。</p>
+<p>《重构》<br><strong>10.7Preserve Whole Object(保持对象完整)</strong><br>有时候，将同一对象的若干项数据作为参数，传递给某个函数。这样做的问题在于:万一将来被调用的函数需要新的数据项，就必须查找并修改此函数的所有调用。<br><em>如果把这些数据所属的整个对象传给函数，就可以避免这种尴尬</em>，因为被调用的函数可以向那个对象请求任何它想要的信息。<br>Spring示例代码ConfigurationClassBeanDefinitionReader::loadBeanDefinitionsForBeanMethod(BeanMethod beanMethod)，直接把对象BeanMethod传给函数，由被调用函数通过getXXX方法请求信息。</p>
+<pre><code><span class="keyword">private</span> <span class="keyword">void</span> <span class="title">loadBeanDefinitionsForBeanMethod</span>(BeanMethod beanMethod) {
+    <span class="comment">//.......</span>
+    ConfigurationClass configClass = beanMethod.getConfigurationClass();
+    MethodMetadata metadata = beanMethod.getMetadata();
+    <span class="comment">//.......</span>
+}
+</code></pre><hr>
+<p>《Effective Java》<br><strong>第52条:通过接口引用对象</strong><br><em>如果有合适的接口存在，那么对于参数、返回值、变量和域来说，就都应该使用接口类型(而不是类)进行声明</em>。这样会使程序变得更加灵活，当你决定改变实现时，所要做的就只是改变构造器中类的名称(或使用不同的静态工厂)。<br>书中举例:原本的实现</p>
+<pre><code><span class="input"><span class="prompt">List&lt;Subscriber&gt;</span> subscribers=new <span class="constant">Vector</span>&lt;<span class="constant">Subscriber</span>&gt;();</span>
+</code></pre><p>后来需求改变，不需要考虑线程安全，而需要较快效率，选用ArrayList而不是Vector</p>
+<pre><code><span class="input"><span class="prompt">List&lt;Subscriber&gt;</span> subscribers=new <span class="constant">ArrayList</span>&lt;<span class="constant">Subscriber</span>&gt;();</span>
+</code></pre><p>更改之后周围的所有代码都可以继续工作。<br>Spring示例代码BeanDefinitionReaderUtils中</p>
+<pre><code><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">registerBeanDefinition</span>(
+        BeanDefinitionHolder definitionHolder, BeanDefinitionRegistry registry)
+        <span class="keyword">throws</span> BeanDefinitionStoreException {
+
+    String beanName = definitionHolder.getBeanName();
+    registry.registerBeanDefinition(beanName, definitionHolder.getBeanDefinition());
+    <span class="comment">//.......</span>
+}
+</code></pre><p>BeanDefinitionRegistry接口负责注册Bean的定义，这样实现BeanDefinitionRegistry接口的类都可以传入此函数。</p>
+<hr>
+<p><strong>第28条:利用有限制通配符来提升API的灵活性</strong><br>书中举例:</p>
+<pre><code><span class="comment">//堆栈API</span>
+<span class="keyword">public</span> <span class="keyword">class</span> Stack&lt;E&gt;{
+    <span class="keyword">public</span> <span class="title">Stack</span>();
+    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title">push</span>(E e);
+    <span class="keyword">public</span> E <span class="title">pop</span>();
+    <span class="keyword">public</span> boolean <span class="title">isEmpty</span>();
+    <span class="comment">//按顺序将一系列元素全部放到堆栈中</span>
+    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title">pushAll</span>(Iterable&lt;E&gt; src);
+    <span class="comment">//从堆栈中弹出每个元素，并将这些元素添加到制定集合</span>
+    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title">popAll</span>(Collection&lt;E&gt; dst);
+}
+</code></pre><p>如下情况会报错</p>
+<pre><code><span class="built_in">Stack</span><span class="subst">&lt;</span>Number<span class="subst">&gt;</span> <span class="built_in">stack</span><span class="subst">=</span><span class="literal">new</span> <span class="built_in">Stack</span><span class="subst">&lt;</span>Number<span class="subst">&gt;</span>();
+Iterable<span class="subst">&lt;</span><span class="built_in">Integer</span><span class="subst">&gt;</span> integers<span class="subst">=</span><span class="attribute">...</span><span class="built_in">..</span>;
+number<span class="built_in">.</span>pushAll(integers);
+</code></pre><p>这是因为参数化类型是不可变的。要解决这个问题，应把pushAll的参数改为”<em>E的某个子类型的Iterable接口</em>“，这时就需要有限制通配符:</p>
+<pre><code><span class="keyword">public</span> <span class="keyword">void</span> <span class="title">pushAll</span>(Iterable&lt;? extends E&gt; src)
+</code></pre><p>Spring示例代码AnnotatedBeanDefinitionReader中</p>
+<pre><code><span class="xml"><span class="php"><span class="comment">//qualifier是Bean的限定词，通过注解方式实现，如@Primary、@Lazy，详见Spring Doc</span>
+<span class="keyword">public</span> void registerBean(<span class="class"><span class="keyword">Class</span>&lt;?&gt;</span></span> annotatedClass, String name,
+        @SuppressWarnings("unchecked") Class<span class="php"><span class="class">&lt;? <span class="keyword">extends</span> <span class="title">Annotation</span>&gt;... <span class="title">qualifiers</span>) </span>{
+    <span class="comment">//.......</span>
+    <span class="keyword">if</span> (qualifiers != <span class="keyword">null</span>) {
+        <span class="keyword">for</span> (<span class="class"><span class="keyword">Class</span>&lt;? <span class="keyword">extends</span> <span class="title">Annotation</span>&gt; <span class="title">qualifier</span> : <span class="title">qualifiers</span>) </span>{
+            <span class="keyword">if</span> (Primary.class.equals(qualifier)) {
+                abd.setPrimary(<span class="keyword">true</span>);
+            }
+            <span class="keyword">else</span> <span class="keyword">if</span> (Lazy.class.equals(qualifier)) {
+                abd.setLazyInit(<span class="keyword">true</span>);
+            }
+            <span class="keyword">else</span> {
+                abd.addQualifier(<span class="keyword">new</span> AutowireCandidateQualifier(qualifier));
+            }
+        }
+    }    
+  <span class="comment">//.......</span>
+}</span></span>
+</code></pre><hr>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+</div>
+
+
+<div class="article-share" id="share">
+
+  <div data-url="http://didihe1988.github.io/2014/11/27/spring-function-learning/" data-title="结合《重构》和《Effective Java》的spring函数风格学习 | didihe1988&#39;s blog" data-tsina="null" class="share clearfix">
+  </div>
+
+</div>
+</footer>   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+ <div class="prev" >
+ <a href="/2014/12/29/AnnotatedElementUtils/" title="Spring-AnnotatedElementUtils类中递归和Template Method设计模式的使用">
+  <strong>上一篇：</strong><br/>
+  <span>
+  Spring-AnnotatedElementUtils类中递归和Template Method设计模式的使用</span>
+</a>
+</div>
+
+
+<div class="next">
+<a href="/2014/10/23/thoughts/"  title="碎碎念">
+ <strong>下一篇：</strong><br/> 
+ <span>碎碎念
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="Show Sidebar"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">Contents</strong>
+ 
+ 
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="Hide Sidebar"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+
+  <div class="linkslist">
+  <p class="asidetitle">Links</p>
+    <ul>
+      <li><a href="http://bits.pw" target="_blank" title="WuChong">RenzHoly's Blog</a></li>
+      <li><a href="http://nanshu.me" target="_blank" title="Hexo">Nanshu's Blog</a></li>
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	<div class="line">
+		<span></span>
+		<div class="author"></div>
+	</div>
+	
+	
+	<section class="info">
+		<p> miao <br/>
+			 miao miao miao</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		
+		<a href="https://github.com/didihe1988" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:didihe1988@gmail.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+		<p class="copyright">Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Pacman">Jacman</a> © 2015 
+		
+		<a href="http://didihe1988.github.io/about" target="_blank" title="didihe1988">didihe1988</a>
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else
+    {
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      h  = $('article h2')
+      ah = $('article h2'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  if(ah.length==0){
+    t.css('display','none');
+  }else{
+    c.click(function(){
+      ta.css('display', 'block').addClass('fadeIn');
+    });
+    o.click(function(){
+      ta.css('display', 'none');
+    });
+    $(window).scroll(function(){
+      ta.css("top",Math.max(140,320-$(this).scrollTop()));
+    });
+  };
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#share"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="QRcode"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="Weibo"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+
+
+<div id="totop">
+<a title="Back to Top"><img src="/img/scrollup.png"/></a>
+</div>
+
+<script src="/js/totop.js"></script>
+
+
+
+
+  </body>
+</html>
